@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { View, Text, StyleSheet, PanResponder, GestureResponderEvent, PanResponderGestureState } from 'react-native';
+import { View, Text, StyleSheet, PanResponder, GestureResponderEvent, ScrollView } from 'react-native';
 import { TowerType } from '../types';
 import { TOWER_CONFIGS } from '../constants';
 
@@ -25,14 +25,16 @@ function DraggableTowerCard({
 }) {
   const config = TOWER_CONFIGS[type];
   const canAfford = gold >= config.cost;
+  const goldRef = useRef(gold);
+  goldRef.current = gold;
   const isDragging = useRef(false);
 
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => canAfford,
-      onMoveShouldSetPanResponder: () => canAfford,
+      onStartShouldSetPanResponder: () => goldRef.current >= config.cost,
+      onMoveShouldSetPanResponder: () => goldRef.current >= config.cost,
       onPanResponderGrant: (e: GestureResponderEvent) => {
-        if (!canAfford) return;
+        if (goldRef.current < config.cost) return;
         isDragging.current = true;
         onDragStart(type, e.nativeEvent.pageX, e.nativeEvent.pageY);
       },
@@ -59,11 +61,11 @@ function DraggableTowerCard({
       style={[
         styles.card,
         !canAfford && styles.cardDisabled,
-        { borderColor: config.color + '66' },
+        { borderColor: canAfford ? config.color + '66' : '#222' },
       ]}
     >
       <Text style={styles.emoji}>{config.emoji}</Text>
-      <Text style={[styles.name, !canAfford && styles.textDisabled]}>
+      <Text style={[styles.name, !canAfford && styles.textDisabled]} numberOfLines={1}>
         {config.name}
       </Text>
       <Text style={[styles.cost, !canAfford && styles.textDisabled]}>
@@ -78,7 +80,7 @@ export default function TowerPanel({ gold, onDragStart, onDragMove, onDragEnd }:
   const towers = Object.values(TOWER_CONFIGS);
 
   return (
-    <View style={styles.container}>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.container}>
       {towers.map((config) => (
         <DraggableTowerCard
           key={config.type}
@@ -89,7 +91,7 @@ export default function TowerPanel({ gold, onDragStart, onDragMove, onDragEnd }:
           onDragEnd={onDragEnd}
         />
       ))}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -97,43 +99,42 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 6,
     paddingHorizontal: 4,
-    gap: 8,
+    gap: 6,
   },
   card: {
-    width: 78,
+    width: 66,
     alignItems: 'center',
-    padding: 8,
+    padding: 6,
     borderRadius: 8,
-    borderWidth: 2,
-    borderColor: '#333',
-    backgroundColor: '#1a1a2e',
+    borderWidth: 1.5,
+    backgroundColor: '#12121f',
   },
   cardDisabled: {
-    opacity: 0.4,
+    opacity: 0.35,
   },
   emoji: {
-    fontSize: 24,
-    marginBottom: 2,
+    fontSize: 22,
+    marginBottom: 1,
   },
   name: {
-    color: '#fff',
-    fontSize: 11,
+    color: '#ccc',
+    fontSize: 10,
     fontWeight: '600',
   },
   cost: {
     color: '#FFD700',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 'bold',
-    marginTop: 2,
+    marginTop: 1,
   },
   textDisabled: {
-    color: '#666',
+    color: '#555',
   },
   dragHint: {
-    color: '#888',
-    fontSize: 9,
-    marginTop: 3,
+    color: '#666',
+    fontSize: 8,
+    marginTop: 2,
   },
 });

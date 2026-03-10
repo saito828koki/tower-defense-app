@@ -1,4 +1,4 @@
-export type TowerType = 'basic' | 'sniper' | 'splash' | 'freeze';
+export type TowerType = 'archer' | 'fire_mage' | 'ice_spirit' | 'stone_knight' | 'thunder_sage';
 
 export interface TowerConfig {
   type: TowerType;
@@ -10,9 +10,20 @@ export interface TowerConfig {
   color: string;
   emoji: string;
   description: string;
+  attackType: 'single' | 'splash' | 'chain';
+  damageType: 'physical' | 'magic';
   splashRadius?: number;
+  chainCount?: number;
   slowFactor?: number;
   slowDuration?: number;
+  dotDamage?: number;
+  dotDuration?: number;
+}
+
+export interface TowerUpgradeInfo {
+  cost: number;
+  damageMultiplier: number;
+  rangeBonus: number;
 }
 
 export interface Tower {
@@ -21,19 +32,29 @@ export interface Tower {
   row: number;
   col: number;
   lastFired: number;
-  level: number;
+  level: number; // 1-3
 }
 
-export type EnemyType = 'basic' | 'fast' | 'tank' | 'boss';
+export type EnemyType =
+  | 'slime' | 'goblin_runner' | 'bat'
+  | 'orc_warrior' | 'skeleton' | 'goblin_rider' | 'dark_mage'
+  | 'stone_golem' | 'banshee' | 'vampire'
+  | 'orc_general' | 'ice_dragon' | 'demon_lord';
 
 export interface EnemyConfig {
   type: EnemyType;
   name: string;
   health: number;
-  speed: number; // cells per second
+  speed: number;
   reward: number;
   color: string;
-  size: number; // relative size 0-1
+  size: number;
+  emoji: string;
+  flying?: boolean; // immune to stone_knight
+  magicResist?: number; // 0-1 damage reduction from magic
+  physicalResist?: number; // 0-1 damage reduction from physical
+  healPerSecond?: number; // HP regen
+  isBoss?: boolean;
 }
 
 export interface Enemy {
@@ -42,10 +63,17 @@ export interface Enemy {
   health: number;
   maxHealth: number;
   pathIndex: number;
-  progress: number; // 0-1 between current and next path point
+  progress: number;
   speed: number;
   reward: number;
   slowUntil: number;
+  dotUntil: number;
+  dotDamage: number;
+  flying: boolean;
+  magicResist: number;
+  physicalResist: number;
+  healPerSecond: number;
+  isBoss: boolean;
 }
 
 export interface Projectile {
@@ -60,9 +88,12 @@ export interface Projectile {
 
 export interface WaveConfig {
   enemies: { type: EnemyType; count: number; interval: number }[];
+  isBossWave?: boolean;
 }
 
 export type CellType = 'empty' | 'path' | 'start' | 'end' | 'tower';
+
+export type WavePhase = 'prep' | 'active' | 'interval' | 'idle';
 
 export interface GameState {
   grid: CellType[][];
@@ -71,13 +102,17 @@ export interface GameState {
   enemies: Enemy[];
   projectiles: Projectile[];
   gold: number;
-  lives: number;
+  baseHp: number;
+  maxBaseHp: number;
   wave: number;
-  waveInProgress: boolean;
+  totalWaves: number;
+  wavePhase: WavePhase;
+  prepTimer: number; // seconds remaining
   gameOver: boolean;
   gameWon: boolean;
   score: number;
   selectedTower: TowerType | null;
+  selectedPlacedTower: Tower | null;
   speed: number;
   isPaused: boolean;
 }

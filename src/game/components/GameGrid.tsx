@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
-import { View, StyleSheet, Pressable, Dimensions } from 'react-native';
-import { GameState, Tower } from '../types';
-import { GRID_COLS, GRID_ROWS, TOWER_CONFIGS } from '../constants';
+import { View, Text, StyleSheet, Pressable, Dimensions } from 'react-native';
+import { GameState, Tower, TowerType } from '../types';
+import { GRID_COLS, GRID_ROWS, TOWER_CONFIGS, ENEMY_CONFIGS } from '../constants';
 import { getEnemyPosition } from '../useGameEngine';
 
 const screenWidth = Dimensions.get('window').width;
@@ -13,37 +13,30 @@ interface Props {
   state: GameState;
   onCellPress: (row: number, col: number) => void;
   hoverCell?: { row: number; col: number } | null;
-  hoverTowerType?: string | null;
+  hoverTowerType?: TowerType | null;
 }
 
 const CellView = React.memo(
   ({
     type,
-    row,
-    col,
     tower,
-    isSelected,
     isHovered,
     hoverColor,
     onPress,
   }: {
     type: string;
-    row: number;
-    col: number;
     tower?: Tower;
-    isSelected: boolean;
     isHovered: boolean;
     hoverColor?: string;
     onPress: () => void;
   }) => {
     const cellStyle = useMemo(() => {
-      let bg = '#1a1a2e';
-      if (type === 'path' || type === 'start' || type === 'end') bg = '#2d2d44';
-      if (type === 'start') bg = '#4a3';
-      if (type === 'end') bg = '#d44';
-      if (tower) bg = TOWER_CONFIGS[tower.type].color + '88';
-      if (isSelected && type === 'empty') bg = '#ffffff22';
-      if (isHovered && type === 'empty' && !tower) bg = (hoverColor || '#4CAF50') + '55';
+      let bg = '#12121f';
+      if (type === 'path' || type === 'start' || type === 'end') bg = '#252538';
+      if (type === 'start') bg = '#2d5a27';
+      if (type === 'end') bg = '#8b1a1a';
+      if (tower) bg = TOWER_CONFIGS[tower.type].color + '55';
+      if (isHovered && type === 'empty' && !tower) bg = (hoverColor || '#4CAF50') + '44';
       return [
         styles.cell,
         {
@@ -53,18 +46,20 @@ const CellView = React.memo(
         },
         isHovered && type === 'empty' && !tower && styles.cellHovered,
       ];
-    }, [type, tower, isSelected, isHovered, hoverColor]);
+    }, [type, tower, isHovered, hoverColor]);
 
     return (
       <Pressable onPress={onPress} style={cellStyle}>
         {tower && (
           <View style={styles.towerIcon}>
-            <View
-              style={[
-                styles.towerDot,
-                { backgroundColor: TOWER_CONFIGS[tower.type].color },
-              ]}
-            />
+            <Text style={styles.towerEmoji}>
+              {TOWER_CONFIGS[tower.type].emoji}
+            </Text>
+            {tower.level > 1 && (
+              <View style={[styles.levelBadge, { backgroundColor: TOWER_CONFIGS[tower.type].color }]}>
+                <Text style={styles.levelText}>{tower.level}</Text>
+              </View>
+            )}
           </View>
         )}
       </Pressable>
@@ -90,10 +85,7 @@ export default function GameGrid({ state, onCellPress, hoverCell, hoverTowerType
             <CellView
               key={`${r}-${c}`}
               type={cell}
-              row={r}
-              col={c}
               tower={towerMap[`${r}-${c}`]}
-              isSelected={state.selectedTower !== null && cell === 'empty'}
               isHovered={hoverCell?.row === r && hoverCell?.col === c}
               hoverColor={hoverTowerType ? TOWER_CONFIGS[hoverTowerType]?.color : undefined}
               onPress={() => onCellPress(r, c)}
@@ -105,13 +97,9 @@ export default function GameGrid({ state, onCellPress, hoverCell, hoverTowerType
       {/* Enemies */}
       {state.enemies.map((enemy) => {
         const pos = getEnemyPosition(enemy);
-        const config = {
-          basic: { color: '#8BC34A', size: 0.6 },
-          fast: { color: '#9C27B0', size: 0.45 },
-          tank: { color: '#795548', size: 0.8 },
-          boss: { color: '#F44336', size: 1 },
-        }[enemy.type];
-        const enemySize = CELL_SIZE * config.size;
+        const enemyConfig = ENEMY_CONFIGS[enemy.type];
+        if (!enemyConfig) return null;
+        const enemySize = CELL_SIZE * enemyConfig.size;
         const healthPct = enemy.health / enemy.maxHealth;
 
         return (
@@ -124,23 +112,31 @@ export default function GameGrid({ state, onCellPress, hoverCell, hoverTowerType
                 top: pos.row * CELL_SIZE + (CELL_SIZE - enemySize) / 2,
                 width: enemySize,
                 height: enemySize,
-                backgroundColor: config.color,
+                backgroundColor: enemyConfig.color + '88',
                 borderRadius: enemySize / 2,
+                borderWidth: enemy.isBoss ? 2 : 0,
+                borderColor: '#FFD700',
               },
             ]}
           >
+            <Text style={{ fontSize: enemySize * 0.6 }}>{enemyConfig.emoji}</Text>
             {/* Health bar */}
-            <View style={[styles.healthBarBg, { width: enemySize }]}>
+            <View style={[styles.healthBarBg, { width: Math.max(enemySize, 20) }]}>
               <View
                 style={[
                   styles.healthBar,
                   {
-                    width: enemySize * healthPct,
-                    backgroundColor: healthPct > 0.5 ? '#4CAF50' : healthPct > 0.25 ? '#FF9800' : '#F44336',
+                    width: Math.max(enemySize, 20) * healthPct,
+                    backgroundColor:
+                      healthPct > 0.5 ? '#4CAF50' : healthPct > 0.25 ? '#FF9800' : '#F44336',
                   },
                 ]}
               />
             </View>
+            {/* Slow indicator */}
+            {enemy.slowUntil > Date.now() && (
+              <View style={styles.slowIndicator} />
+            )}
           </View>
         );
       })}
@@ -160,40 +156,42 @@ export default function GameGrid({ state, onCellPress, hoverCell, hoverTowerType
             style={[
               styles.projectile,
               {
-                left: x * CELL_SIZE + CELL_SIZE / 2 - 3,
-                top: y * CELL_SIZE + CELL_SIZE / 2 - 3,
+                left: x * CELL_SIZE + CELL_SIZE / 2 - 4,
+                top: y * CELL_SIZE + CELL_SIZE / 2 - 4,
                 backgroundColor: config.color,
+                shadowColor: config.color,
+                shadowOpacity: 0.8,
+                shadowRadius: 4,
               },
             ]}
           />
         );
       })}
 
-      {/* Tower range indicators */}
-      {state.selectedTower &&
-        state.towers
-          .filter((t) => t.type === state.selectedTower)
-          .map((t) => {
-            const config = TOWER_CONFIGS[t.type];
-            const rangeSize = config.range * 2 * CELL_SIZE;
-            return (
-              <View
-                key={`range-${t.id}`}
-                pointerEvents="none"
-                style={[
-                  styles.rangeCircle,
-                  {
-                    left: t.col * CELL_SIZE + CELL_SIZE / 2 - rangeSize / 2,
-                    top: t.row * CELL_SIZE + CELL_SIZE / 2 - rangeSize / 2,
-                    width: rangeSize,
-                    height: rangeSize,
-                    borderRadius: rangeSize / 2,
-                    borderColor: config.color + '44',
-                  },
-                ]}
-              />
-            );
-          })}
+      {/* Selected placed tower range */}
+      {state.selectedPlacedTower && (() => {
+        const t = state.selectedPlacedTower!;
+        const config = TOWER_CONFIGS[t.type];
+        const levelRange = config.range + 0.5 * (t.level - 1);
+        const rangeSize = levelRange * 2 * CELL_SIZE;
+        return (
+          <View
+            pointerEvents="none"
+            style={[
+              styles.rangeCircle,
+              {
+                left: t.col * CELL_SIZE + CELL_SIZE / 2 - rangeSize / 2,
+                top: t.row * CELL_SIZE + CELL_SIZE / 2 - rangeSize / 2,
+                width: rangeSize,
+                height: rangeSize,
+                borderRadius: rangeSize / 2,
+                borderColor: config.color + '66',
+                backgroundColor: config.color + '11',
+              },
+            ]}
+          />
+        );
+      })()}
 
       {/* Drag hover range preview */}
       {hoverCell && hoverTowerType && state.grid[hoverCell.row]?.[hoverCell.col] === 'empty' && (() => {
@@ -227,16 +225,18 @@ export { CELL_SIZE, GRID_WIDTH, GRID_HEIGHT };
 const styles = StyleSheet.create({
   container: {
     position: 'relative',
-    backgroundColor: '#0f0f23',
-    borderRadius: 4,
+    backgroundColor: '#0a0a18',
+    borderRadius: 6,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#2a2a3e',
   },
   row: {
     flexDirection: 'row',
   },
   cell: {
     borderWidth: 0.5,
-    borderColor: '#ffffff08',
+    borderColor: '#ffffff06',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -248,10 +248,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  towerDot: {
-    width: CELL_SIZE * 0.5,
-    height: CELL_SIZE * 0.5,
-    borderRadius: CELL_SIZE * 0.25,
+  towerEmoji: {
+    fontSize: CELL_SIZE * 0.55,
+  },
+  levelBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  levelText: {
+    color: '#fff',
+    fontSize: 8,
+    fontWeight: 'bold',
   },
   enemy: {
     position: 'absolute',
@@ -261,20 +274,28 @@ const styles = StyleSheet.create({
   },
   healthBarBg: {
     position: 'absolute',
-    top: -6,
+    top: -7,
     height: 3,
-    backgroundColor: '#333',
-    borderRadius: 1,
+    backgroundColor: '#00000088',
+    borderRadius: 2,
   },
   healthBar: {
     height: 3,
-    borderRadius: 1,
+    borderRadius: 2,
   },
-  projectile: {
+  slowIndicator: {
     position: 'absolute',
+    bottom: -3,
     width: 6,
     height: 6,
     borderRadius: 3,
+    backgroundColor: '#00CED1',
+  },
+  projectile: {
+    position: 'absolute',
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     zIndex: 20,
   },
   rangeCircle: {

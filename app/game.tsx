@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useGameEngine } from '../src/game/useGameEngine';
 import GameGrid, { CELL_SIZE } from '../src/game/components/GameGrid';
 import TowerPanel from '../src/game/components/TowerPanel';
+import TowerInfoPanel from '../src/game/components/TowerInfoPanel';
 import HUD from '../src/game/components/HUD';
 import { TowerType } from '../src/game/types';
 import { TOWER_CONFIGS } from '../src/game/constants';
@@ -19,7 +20,11 @@ export default function GameScreen() {
   const {
     state,
     startWave,
+    skipPrep,
     placeTower,
+    upgradeTower,
+    sellTower,
+    selectPlacedTower,
     setSpeed,
     togglePause,
     resetGame,
@@ -40,8 +45,9 @@ export default function GameScreen() {
   const hoverCell = drag ? getGridCell(drag.x, drag.y) : null;
 
   const handleDragStart = useCallback((type: TowerType, x: number, y: number) => {
+    selectPlacedTower(null);
     setDrag({ type, x, y });
-  }, []);
+  }, [selectPlacedTower]);
 
   const handleDragMove = useCallback((x: number, y: number) => {
     setDrag((prev) => prev ? { ...prev, x, y } : null);
@@ -58,8 +64,24 @@ export default function GameScreen() {
     });
   }, [getGridCell, placeTower]);
 
-  const handleCellPress = (_row: number, _col: number) => {
-    // Cell tap is unused — towers are placed via drag & drop
+  const handleCellPress = (row: number, col: number) => {
+    // Check if there's a tower on this cell
+    const tower = state.towers.find((t) => t.row === row && t.col === col);
+    if (tower) {
+      selectPlacedTower(
+        state.selectedPlacedTower?.id === tower.id ? null : tower
+      );
+    } else {
+      selectPlacedTower(null);
+    }
+  };
+
+  const handleUpgrade = (towerId: string) => {
+    upgradeTower(towerId);
+  };
+
+  const handleSell = (towerId: string) => {
+    sellTower(towerId);
   };
 
   return (
@@ -69,7 +91,7 @@ export default function GameScreen() {
         <Pressable onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backText}>{'< 戻る'}</Text>
         </Pressable>
-        <Text style={styles.headerTitle}>Tower Defense</Text>
+        <Text style={styles.headerTitle}>ARCANE SIEGE</Text>
         <Pressable onPress={resetGame} style={styles.resetBtn}>
           <Text style={styles.resetText}>リセット</Text>
         </Pressable>
@@ -78,13 +100,16 @@ export default function GameScreen() {
       {/* HUD */}
       <HUD
         gold={state.gold}
-        lives={state.lives}
+        baseHp={state.baseHp}
+        maxBaseHp={state.maxBaseHp}
         wave={state.wave}
         score={state.score}
-        waveInProgress={state.waveInProgress}
+        wavePhase={state.wavePhase}
+        prepTimer={state.prepTimer}
         speed={state.speed}
         isPaused={state.isPaused}
         onStartWave={startWave}
+        onSkipPrep={skipPrep}
         onSetSpeed={setSpeed}
         onTogglePause={togglePause}
       />
@@ -93,12 +118,15 @@ export default function GameScreen() {
       <View
         style={styles.gridContainer}
         onLayout={(e) => {
-          // Get grid container layout, then compute actual grid position (centered)
-          const layout = e.nativeEvent.layout;
-          e.target.measureInWindow((wx: number, wy: number, w: number, h: number) => {
+          e.target.measureInWindow((wx: number, wy: number, w: number) => {
             const gridW = CELL_SIZE * state.grid[0].length;
             const offsetX = (w - gridW) / 2;
-            gridLayout.current = { x: wx + offsetX, y: wy, width: gridW, height: CELL_SIZE * state.grid.length };
+            gridLayout.current = {
+              x: wx + offsetX,
+              y: wy,
+              width: gridW,
+              height: CELL_SIZE * state.grid.length,
+            };
           });
         }}
       >
@@ -110,17 +138,34 @@ export default function GameScreen() {
         />
       </View>
 
-      {/* Tower Selection - Drag & Drop */}
-      <TowerPanel
-        gold={state.gold}
-        onDragStart={handleDragStart}
-        onDragMove={handleDragMove}
-        onDragEnd={handleDragEnd}
-      />
+      {/* Tower Info Panel (when a placed tower is selected) */}
+      {state.selectedPlacedTower && (
+        <TowerInfoPanel
+          tower={state.selectedPlacedTower}
+          gold={state.gold}
+          onUpgrade={handleUpgrade}
+          onSell={handleSell}
+          onClose={() => selectPlacedTower(null)}
+        />
+      )}
+
+      {/* Tower Selection - Drag & Drop (hidden when info panel is shown) */}
+      {!state.selectedPlacedTower && (
+        <TowerPanel
+          gold={state.gold}
+          onDragStart={handleDragStart}
+          onDragMove={handleDragMove}
+          onDragEnd={handleDragEnd}
+        />
+      )}
 
       {/* Hint */}
       <Text style={styles.hint}>
-        タワーをドラッグしてグリッドに配置
+        {state.selectedPlacedTower
+          ? 'タワーを強化・売却できます'
+          : drag
+          ? 'グリッドの空きマスにドロップして配置'
+          : 'タワーをドラッグして配置 / 配置済みタワーをタップ'}
       </Text>
 
       {/* Floating drag ghost */}
@@ -142,21 +187,21 @@ export default function GameScreen() {
         </View>
       )}
 
-      {/* Game Over Overlay */}
+      {/* Game Over / Win Overlay */}
       {(state.gameOver || state.gameWon) && (
         <View style={styles.overlay}>
           <View style={styles.overlayContent}>
             <Text style={styles.overlayEmoji}>
-              {state.gameWon ? '🎉' : '💀'}
+              {state.gameWon ? '🏰' : '💀'}
             </Text>
             <Text style={styles.overlayTitle}>
-              {state.gameWon ? 'クリア!' : 'ゲームオーバー'}
+              {state.gameWon ? '勝利！城を守り抜いた！' : '城が陥落した...'}
             </Text>
-            <Text style={styles.overlayScore}>スコア: {state.score}</Text>
-            <Text style={styles.overlayWave}>到達Wave: {state.wave}</Text>
+            <Text style={styles.overlayScore}>SCORE: {state.score}</Text>
+            <Text style={styles.overlayWave}>到達Wave: {state.wave}/{state.totalWaves}</Text>
 
             <Pressable onPress={resetGame} style={styles.retryBtn}>
-              <Text style={styles.retryText}>もう一度</Text>
+              <Text style={styles.retryText}>もう一度挑戦</Text>
             </Pressable>
             <Pressable onPress={() => router.back()} style={styles.menuBtn}>
               <Text style={styles.menuText}>メニューへ</Text>
@@ -171,7 +216,7 @@ export default function GameScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0a0a1a',
+    backgroundColor: '#080816',
   },
   header: {
     flexDirection: 'row',
@@ -184,19 +229,20 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   backText: {
-    color: '#6688ff',
+    color: '#6677aa',
     fontSize: 14,
   },
   headerTitle: {
-    color: '#fff',
+    color: '#c8a86e',
     fontSize: 16,
     fontWeight: 'bold',
+    letterSpacing: 2,
   },
   resetBtn: {
     padding: 4,
   },
   resetText: {
-    color: '#ff6666',
+    color: '#884444',
     fontSize: 14,
   },
   gridContainer: {
@@ -204,8 +250,8 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   hint: {
-    color: '#666',
-    fontSize: 12,
+    color: '#555',
+    fontSize: 11,
     textAlign: 'center',
     paddingVertical: 4,
   },
@@ -229,7 +275,7 @@ const styles = StyleSheet.create({
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.85)',
+    backgroundColor: 'rgba(0,0,0,0.88)',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 100,
@@ -237,21 +283,22 @@ const styles = StyleSheet.create({
   overlayContent: {
     alignItems: 'center',
     padding: 32,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: '#141428',
     borderRadius: 16,
     borderWidth: 2,
-    borderColor: '#333',
-    minWidth: 250,
+    borderColor: '#3a3a5e',
+    minWidth: 260,
   },
   overlayEmoji: {
     fontSize: 64,
     marginBottom: 12,
   },
   overlayTitle: {
-    color: '#fff',
-    fontSize: 28,
+    color: '#ddd',
+    fontSize: 22,
     fontWeight: 'bold',
     marginBottom: 8,
+    textAlign: 'center',
   },
   overlayScore: {
     color: '#FFD700',
@@ -260,18 +307,20 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   overlayWave: {
-    color: '#aaa',
-    fontSize: 16,
+    color: '#888',
+    fontSize: 15,
     marginBottom: 24,
   },
   retryBtn: {
     paddingHorizontal: 36,
     paddingVertical: 12,
-    backgroundColor: '#4CAF50',
+    backgroundColor: '#2d6b30',
     borderRadius: 8,
     marginBottom: 12,
     width: '100%',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#4CAF50',
   },
   retryText: {
     color: '#fff',
@@ -281,13 +330,15 @@ const styles = StyleSheet.create({
   menuBtn: {
     paddingHorizontal: 36,
     paddingVertical: 12,
-    backgroundColor: '#333',
+    backgroundColor: '#1a1a2e',
     borderRadius: 8,
     width: '100%',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#333',
   },
   menuText: {
-    color: '#aaa',
+    color: '#888',
     fontSize: 16,
   },
 });

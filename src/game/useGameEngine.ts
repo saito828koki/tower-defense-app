@@ -6,6 +6,7 @@ import {
   Projectile,
   TowerType,
   CellType,
+  WavePhase,
 } from './types';
 import {
   TOWER_CONFIGS,
@@ -13,8 +14,14 @@ import {
   WAVES,
   PATH_POINTS,
   STARTING_GOLD,
-  STARTING_LIVES,
+  STARTING_BASE_HP,
+  MAX_BASE_HP,
+  PREP_TIME,
+  TOTAL_WAVES,
   createGrid,
+  getTowerStats,
+  getUpgradeCost,
+  getSellValue,
 } from './constants';
 
 let nextId = 0;
@@ -24,13 +31,37 @@ function distance(r1: number, c1: number, r2: number, c2: number) {
   return Math.sqrt((r1 - r2) ** 2 + (c1 - c2) ** 2);
 }
 
-function getEnemyPosition(enemy: Enemy) {
+export function getEnemyPosition(enemy: Enemy) {
   const curr = PATH_POINTS[enemy.pathIndex];
   const next = PATH_POINTS[enemy.pathIndex + 1];
   if (!next) return { row: curr.row, col: curr.col };
   return {
     row: curr.row + (next.row - curr.row) * enemy.progress,
     col: curr.col + (next.col - curr.col) * enemy.progress,
+  };
+}
+
+function createInitialState(): GameState {
+  return {
+    grid: createGrid(),
+    path: PATH_POINTS,
+    towers: [],
+    enemies: [],
+    projectiles: [],
+    gold: STARTING_GOLD,
+    baseHp: STARTING_BASE_HP,
+    maxBaseHp: MAX_BASE_HP,
+    wave: 0,
+    totalWaves: TOTAL_WAVES,
+    wavePhase: 'idle' as WavePhase,
+    prepTimer: 0,
+    gameOver: false,
+    gameWon: false,
+    score: 0,
+    selectedTower: null,
+    selectedPlacedTower: null,
+    speed: 1,
+    isPaused: false,
   };
 }
 
@@ -43,61 +74,123 @@ export function useGameEngine() {
   const spawnTimer = useRef<number>(0);
   const lastUpdate = useRef<number>(0);
   const animRef = useRef<number>(0);
-
-  function createInitialState(): GameState {
-    return {
-      grid: createGrid(),
-      path: PATH_POINTS,
-      towers: [],
-      enemies: [],
-      projectiles: [],
-      gold: STARTING_GOLD,
-      lives: STARTING_LIVES,
-      wave: 0,
-      waveInProgress: false,
-      gameOver: false,
-      gameWon: false,
-      score: 0,
-      selectedTower: null,
-      speed: 1,
-      isPaused: false,
-    };
-  }
+  const intervalTimer = useRef<number>(0);
 
   const update = useCallback((dt: number) => {
     setState((prev) => {
       if (prev.gameOver || prev.gameWon || prev.isPaused) return prev;
 
       const adjustedDt = dt * prev.speed;
-      let { enemies, towers, projectiles, gold, lives, score, waveInProgress, wave, grid, gameOver, gameWon } = {
+      const now = Date.now();
+
+      let {
+        enemies,
+        towers,
+        projectiles,
+        gold,
+        baseHp,
+        score,
+        wavePhase,
+        wave,
+        grid,
+        gameOver,
+        gameWon,
+        prepTimer,
+      } = {
         ...prev,
         enemies: prev.enemies.map((e) => ({ ...e })),
         projectiles: prev.projectiles.map((p) => ({ ...p })),
         grid: prev.grid.map((r) => [...r]),
       };
 
-      const now = Date.now();
-
-      // Spawn enemies from queue
-      spawnTimer.current += adjustedDt;
-      while (spawnQueue.current.length > 0 && spawnTimer.current >= spawnQueue.current[0].delay) {
-        const spawn = spawnQueue.current.shift()!;
-        spawnTimer.current -= spawn.delay;
-        const config = ENEMY_CONFIGS[spawn.type];
-        enemies.push({
-          id: genId(),
-          type: config.type,
-          health: config.health,
-          maxHealth: config.health,
-          pathIndex: 0,
-          progress: 0,
-          speed: config.speed,
-          reward: config.reward,
-          slowUntil: 0,
-        });
+      // --- Prep phase countdown ---
+      if (wavePhase === 'prep') {
+        prepTimer -= adjustedDt / 1000;
+        if (prepTimer <= 0) {
+          prepTimer = 0;
+          wavePhase = 'active';
+          // Start spawning the wave
+          const waveIndex = wave - 1;
+          if (waveIndex >= 0 && waveIndex < WAVES.length) {
+            const waveConfig = WAVES[waveIndex];
+            const queue: { type: string; delay: number }[] = [];
+            let firstEntry = true;
+            for (const group of waveConfig.enemies) {
+              for (let i = 0; i < group.count; i++) {
+                if (firstEntry) {
+                  queue.push({ type: group.type, delay: 500 });
+                  firstEntry = false;
+                } else {
+                  queue.push({ type: group.type, delay: group.interval });
+                }
+              }
+            }
+            spawnQueue.current = queue;
+            spawnTimer.current = 0;
+          }
+        }
       }
 
-      // Move enemies
+      // --- Interval phase countdown ---
+      if (wavePhase === 'interval') {
+        intervalTimer.current -= adjustedDt / 1000;
+        if (intervalTimer.current <= 0) {
+          intervalTimer.current = 0;
+          wavePhase = 'idle';
+        }
+      }
+
+      // --- Spawn enemies from queue (only during active phase) ---
+      if (wavePhase === 'active') {
+        spawnTimer.current += adjustedDt;
+        while (
+          spawnQueue.current.length > 0 &&
+          spawnTimer.current >= spawnQueue.current[0].delay
+        ) {
+          const spawn = spawnQueue.current.shift()!;
+          spawnTimer.current -= spawn.delay;
+          const config = ENEMY_CONFIGS[spawn.type];
+          if (config) {
+            enemies.push({
+              id: genId(),
+              type: config.type,
+              health: config.health,
+              maxHealth: config.health,
+              pathIndex: 0,
+              progress: 0,
+              speed: config.speed,
+              reward: config.reward,
+              slowUntil: 0,
+              dotUntil: 0,
+              dotDamage: 0,
+              flying: config.flying ?? false,
+              magicResist: config.magicResist ?? 0,
+              physicalResist: config.physicalResist ?? 0,
+              healPerSecond: config.healPerSecond ?? 0,
+              isBoss: config.isBoss ?? false,
+            });
+          }
+        }
+      }
+
+      // --- DoT damage on enemies ---
+      for (const enemy of enemies) {
+        if (enemy.dotUntil > now && enemy.dotDamage > 0) {
+          enemy.health -= enemy.dotDamage * (adjustedDt / 1000);
+        }
+      }
+
+      // --- Enemy HP regen ---
+      for (const enemy of enemies) {
+        if (enemy.healPerSecond > 0 && enemy.health > 0) {
+          enemy.health = Math.min(
+            enemy.maxHealth,
+            enemy.health + enemy.healPerSecond * (adjustedDt / 1000)
+          );
+        }
+      }
+
+      // --- Move enemies ---
       const arrivedEnemies: string[] = [];
       const deadEnemies: string[] = [];
 
@@ -114,16 +207,17 @@ export function useGameEngine() {
 
         if (enemy.pathIndex >= PATH_POINTS.length - 1 && enemy.progress >= 1) {
           arrivedEnemies.push(enemy.id);
-          lives -= 1;
+          baseHp -= enemy.isBoss ? 20 : 1;
         }
       }
 
       enemies = enemies.filter((e) => !arrivedEnemies.includes(e.id));
 
-      // Tower firing
+      // --- Tower firing ---
       for (const tower of towers) {
+        const stats = getTowerStats(tower);
         const config = TOWER_CONFIGS[tower.type];
-        const fireInterval = 1000 / config.fireRate;
+        const fireInterval = 1000 / stats.fireRate;
         if (now - tower.lastFired < fireInterval) continue;
 
         // Find nearest enemy in range
@@ -131,9 +225,13 @@ export function useGameEngine() {
         let nearestDist = Infinity;
         for (const enemy of enemies) {
           if (enemy.health <= 0) continue;
+
+          // stone_knight (physical melee) cannot target flying enemies
+          if (tower.type === 'stone_knight' && enemy.flying) continue;
+
           const pos = getEnemyPosition(enemy);
           const dist = distance(tower.row, tower.col, pos.row, pos.col);
-          if (dist <= config.range && dist < nearestDist) {
+          if (dist <= stats.range && dist < nearestDist) {
             nearest = enemy;
             nearestDist = dist;
           }
@@ -147,13 +245,13 @@ export function useGameEngine() {
             fromCol: tower.col,
             targetId: nearest.id,
             progress: 0,
-            damage: config.damage,
+            damage: stats.damage,
             towerType: tower.type,
           });
         }
       }
 
-      // Move projectiles
+      // --- Move projectiles and handle hits ---
       const hitProjectiles: string[] = [];
       for (const proj of projectiles) {
         proj.progress += adjustedDt / 200;
@@ -162,23 +260,100 @@ export function useGameEngine() {
           const target = enemies.find((e) => e.id === proj.targetId);
           if (target) {
             const towerConfig = TOWER_CONFIGS[proj.towerType];
+            const damageType = towerConfig.damageType ?? 'physical';
 
-            if (towerConfig.splashRadius) {
-              // Splash damage
+            // Calculate resistance-adjusted damage
+            const resist =
+              damageType === 'physical'
+                ? target.physicalResist
+                : target.magicResist;
+            const effectiveDamage = proj.damage * (1 - resist);
+
+            const attackType = towerConfig.attackType ?? 'single';
+
+            if (attackType === 'splash' && towerConfig.splashRadius) {
+              // Splash damage: hit all enemies within splashRadius of target
               const targetPos = getEnemyPosition(target);
               for (const enemy of enemies) {
                 const pos = getEnemyPosition(enemy);
                 const dist = distance(targetPos.row, targetPos.col, pos.row, pos.col);
                 if (dist <= towerConfig.splashRadius) {
-                  enemy.health -= proj.damage;
+                  const eResist =
+                    damageType === 'physical'
+                      ? enemy.physicalResist
+                      : enemy.magicResist;
+                  enemy.health -= proj.damage * (1 - eResist);
+                }
+              }
+
+              // fire_mage applies DoT
+              if (proj.towerType === 'fire_mage' && towerConfig.dotDamage && towerConfig.dotDuration) {
+                const targetPos2 = getEnemyPosition(target);
+                for (const enemy of enemies) {
+                  const pos = getEnemyPosition(enemy);
+                  const dist = distance(targetPos2.row, targetPos2.col, pos.row, pos.col);
+                  if (dist <= towerConfig.splashRadius) {
+                    enemy.dotUntil = now + towerConfig.dotDuration;
+                    enemy.dotDamage = towerConfig.dotDamage;
+                  }
+                }
+              }
+            } else if (attackType === 'chain') {
+              // Chain lightning: hit target then chain to 2 more nearby enemies
+              target.health -= effectiveDamage;
+
+              const chainTargets: Enemy[] = [target];
+              let lastHit = target;
+              const chainCount = 2;
+              const chainRange = towerConfig.range;
+
+              for (let c = 0; c < chainCount; c++) {
+                const lastPos = getEnemyPosition(lastHit);
+                let closestChain: Enemy | null = null;
+                let closestChainDist = Infinity;
+
+                for (const enemy of enemies) {
+                  if (enemy.health <= 0) continue;
+                  if (chainTargets.includes(enemy)) continue;
+                  const pos = getEnemyPosition(enemy);
+                  const dist = distance(lastPos.row, lastPos.col, pos.row, pos.col);
+                  if (dist <= chainRange && dist < closestChainDist) {
+                    closestChain = enemy;
+                    closestChainDist = dist;
+                  }
+                }
+
+                if (closestChain) {
+                  const cResist =
+                    damageType === 'physical'
+                      ? closestChain.physicalResist
+                      : closestChain.magicResist;
+                  closestChain.health -= proj.damage * (1 - cResist);
+                  chainTargets.push(closestChain);
+                  lastHit = closestChain;
+                } else {
+                  break;
                 }
               }
             } else {
-              target.health -= proj.damage;
+              // Single target damage
+              target.health -= effectiveDamage;
             }
 
-            if (towerConfig.slowFactor && towerConfig.slowDuration) {
+            // ice_spirit applies slow
+            if (proj.towerType === 'ice_spirit' && towerConfig.slowDuration) {
               target.slowUntil = now + towerConfig.slowDuration;
+            }
+
+            // fire_mage single-target DoT fallback (if attackType is not splash but tower is fire_mage)
+            if (
+              proj.towerType === 'fire_mage' &&
+              attackType !== 'splash' &&
+              towerConfig.dotDamage &&
+              towerConfig.dotDuration
+            ) {
+              target.dotUntil = now + towerConfig.dotDuration;
+              target.dotDamage = towerConfig.dotDamage;
             }
           }
         }
@@ -186,7 +361,7 @@ export function useGameEngine() {
 
       projectiles = projectiles.filter((p) => !hitProjectiles.includes(p.id));
 
-      // Remove dead enemies and grant gold
+      // --- Remove dead enemies and grant gold ---
       for (const enemy of enemies) {
         if (enemy.health <= 0 && !deadEnemies.includes(enemy.id)) {
           deadEnemies.push(enemy.id);
@@ -196,17 +371,25 @@ export function useGameEngine() {
       }
       enemies = enemies.filter((e) => !deadEnemies.includes(e.id));
 
-      // Check wave complete
-      if (waveInProgress && enemies.length === 0 && spawnQueue.current.length === 0) {
-        waveInProgress = false;
-        if (wave >= WAVES.length) {
+      // --- Check wave complete ---
+      if (
+        wavePhase === 'active' &&
+        enemies.length === 0 &&
+        spawnQueue.current.length === 0
+      ) {
+        if (wave >= TOTAL_WAVES) {
           gameWon = true;
+          wavePhase = 'idle';
+        } else {
+          wavePhase = 'interval';
+          intervalTimer.current = 5;
         }
       }
 
-      if (lives <= 0) {
+      // --- Check game over ---
+      if (baseHp <= 0) {
         gameOver = true;
-        lives = 0;
+        baseHp = 0;
       }
 
       return {
@@ -214,14 +397,15 @@ export function useGameEngine() {
         enemies,
         projectiles,
         gold,
-        lives,
+        baseHp,
         score,
-        waveInProgress,
+        wavePhase,
         wave,
         grid,
         gameOver,
         gameWon,
         towers,
+        prepTimer,
       };
     });
   }, []);
@@ -246,61 +430,123 @@ export function useGameEngine() {
 
   const startWave = useCallback(() => {
     setState((prev) => {
-      if (prev.waveInProgress || prev.gameOver || prev.gameWon) return prev;
+      if (prev.wavePhase === 'active' || prev.wavePhase === 'prep' || prev.gameOver || prev.gameWon)
+        return prev;
       const waveIndex = prev.wave;
-      if (waveIndex >= WAVES.length) return prev;
-      const waveConfig = WAVES[waveIndex];
-
-      const queue: { type: string; delay: number }[] = [];
-      let totalDelay = 500; // initial delay
-      for (const group of waveConfig.enemies) {
-        for (let i = 0; i < group.count; i++) {
-          queue.push({ type: group.type, delay: i === 0 && queue.length === 0 ? totalDelay : group.interval });
-        }
-        totalDelay = 800; // gap between groups
-        queue.push({ type: group.type, delay: 0 }); // placeholder removed below
-      }
-      // Remove placeholder entries
-      spawnQueue.current = queue.filter((q) => q.delay > 0 || queue.indexOf(q) === 0);
-      spawnTimer.current = 0;
-
-      return { ...prev, wave: waveIndex + 1, waveInProgress: true };
-    });
-  }, []);
-
-  const placeTower = useCallback((row: number, col: number, towerType?: TowerType) => {
-    setState((prev) => {
-      const type = towerType || prev.selectedTower;
-      if (!type || prev.gameOver) return prev;
-      if (prev.grid[row][col] !== 'empty') return prev;
-      if (prev.towers.some((t) => t.row === row && t.col === col)) return prev;
-
-      const config = TOWER_CONFIGS[type];
-      if (prev.gold < config.cost) return prev;
-
-      const newGrid = prev.grid.map((r) => [...r]);
-      newGrid[row][col] = 'tower';
-
-      const newTower: Tower = {
-        id: genId(),
-        type,
-        row,
-        col,
-        lastFired: 0,
-        level: 1,
-      };
+      if (waveIndex >= TOTAL_WAVES) return prev;
 
       return {
         ...prev,
+        wave: waveIndex + 1,
+        wavePhase: 'prep' as WavePhase,
+        prepTimer: PREP_TIME,
+      };
+    });
+  }, []);
+
+  const skipPrep = useCallback(() => {
+    setState((prev) => {
+      if (prev.wavePhase !== 'prep') return prev;
+      // Force prepTimer to 0 so the update loop transitions to active
+      return {
+        ...prev,
+        prepTimer: 0,
+      };
+    });
+  }, []);
+
+  const placeTower = useCallback(
+    (row: number, col: number, towerType?: TowerType) => {
+      setState((prev) => {
+        const type = towerType || prev.selectedTower;
+        if (!type || prev.gameOver) return prev;
+        if (prev.grid[row][col] !== 'empty') return prev;
+        if (prev.towers.some((t) => t.row === row && t.col === col)) return prev;
+
+        const config = TOWER_CONFIGS[type];
+        if (!config) return prev;
+        if (prev.gold < config.cost) return prev;
+
+        const newGrid = prev.grid.map((r) => [...r]);
+        newGrid[row][col] = 'tower';
+
+        const newTower: Tower = {
+          id: genId(),
+          type,
+          row,
+          col,
+          lastFired: 0,
+          level: 1,
+        };
+
+        return {
+          ...prev,
+          grid: newGrid,
+          towers: [...prev.towers, newTower],
+          gold: prev.gold - config.cost,
+        };
+      });
+    },
+    []
+  );
+
+  const upgradeTower = useCallback((towerId: string) => {
+    setState((prev) => {
+      const tower = prev.towers.find((t) => t.id === towerId);
+      if (!tower) return prev;
+      if (tower.level >= 3) return prev;
+
+      const cost = getUpgradeCost(tower.type, tower.level);
+      if (prev.gold < cost) return prev;
+
+      const newTowers = prev.towers.map((t) =>
+        t.id === towerId ? { ...t, level: t.level + 1 } : t
+      );
+
+      // Update selectedPlacedTower if it matches
+      const updatedSelected =
+        prev.selectedPlacedTower?.id === towerId
+          ? { ...prev.selectedPlacedTower, level: prev.selectedPlacedTower.level + 1 }
+          : prev.selectedPlacedTower;
+
+      return {
+        ...prev,
+        towers: newTowers,
+        gold: prev.gold - cost,
+        selectedPlacedTower: updatedSelected,
+      };
+    });
+  }, []);
+
+  const sellTower = useCallback((towerId: string) => {
+    setState((prev) => {
+      const tower = prev.towers.find((t) => t.id === towerId);
+      if (!tower) return prev;
+
+      const refund = getSellValue(tower.type, tower.level);
+      const newTowers = prev.towers.filter((t) => t.id !== towerId);
+      const newGrid = prev.grid.map((r) => [...r]);
+      newGrid[tower.row][tower.col] = 'empty';
+
+      return {
+        ...prev,
+        towers: newTowers,
         grid: newGrid,
-        towers: [...prev.towers, newTower],
-        gold: prev.gold - config.cost,
+        gold: prev.gold + refund,
+        selectedPlacedTower:
+          prev.selectedPlacedTower?.id === towerId
+            ? null
+            : prev.selectedPlacedTower,
       };
     });
   }, []);
 
   const selectTower = useCallback((type: TowerType | null) => {
-    setState((prev) => ({ ...prev, selectedTower: type }));
+    setState((prev) => ({ ...prev, selectedTower: type, selectedPlacedTower: null }));
+  }, []);
+
+  const selectPlacedTower = useCallback((tower: Tower | null) => {
+    setState((prev) => ({ ...prev, selectedPlacedTower: tower, selectedTower: null }));
   }, []);
 
   const setSpeed = useCallback((speed: number) => {
@@ -315,6 +561,7 @@ export function useGameEngine() {
     nextId = 0;
     spawnQueue.current = [];
     spawnTimer.current = 0;
+    intervalTimer.current = 0;
     lastUpdate.current = 0;
     setState(createInitialState());
   }, []);
@@ -322,13 +569,14 @@ export function useGameEngine() {
   return {
     state,
     startWave,
+    skipPrep,
     placeTower,
+    upgradeTower,
+    sellTower,
     selectTower,
+    selectPlacedTower,
     setSpeed,
     togglePause,
     resetGame,
-    getEnemyPosition,
   };
 }
-
-export { getEnemyPosition };
