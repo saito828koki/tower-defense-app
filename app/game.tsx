@@ -31,37 +31,44 @@ export default function GameScreen() {
   } = useGameEngine();
 
   const [drag, setDrag] = useState<DragState | null>(null);
+  const dragRef = useRef<DragState | null>(null);
   const gridLayout = useRef<LayoutRectangle | null>(null);
+  const gridSize = useRef({ rows: state.grid.length, cols: state.grid[0].length });
+  gridSize.current = { rows: state.grid.length, cols: state.grid[0].length };
 
   const getGridCell = useCallback((pageX: number, pageY: number) => {
     if (!gridLayout.current) return null;
     const { x, y } = gridLayout.current;
     const col = Math.floor((pageX - x) / CELL_SIZE);
     const row = Math.floor((pageY - y) / CELL_SIZE);
-    if (row < 0 || row >= state.grid.length || col < 0 || col >= state.grid[0].length) return null;
+    if (row < 0 || row >= gridSize.current.rows || col < 0 || col >= gridSize.current.cols) return null;
     return { row, col };
-  }, [state.grid]);
+  }, []);
 
   const hoverCell = drag ? getGridCell(drag.x, drag.y) : null;
 
   const handleDragStart = useCallback((type: TowerType, x: number, y: number) => {
     selectPlacedTower(null);
+    dragRef.current = { type, x, y };
     setDrag({ type, x, y });
   }, [selectPlacedTower]);
 
   const handleDragMove = useCallback((x: number, y: number) => {
-    setDrag((prev) => prev ? { ...prev, x, y } : null);
+    if (!dragRef.current) return;
+    dragRef.current = { ...dragRef.current, x, y };
+    setDrag(dragRef.current);
   }, []);
 
   const handleDragEnd = useCallback((x: number, y: number) => {
-    setDrag((prev) => {
-      if (!prev) return null;
+    const prev = dragRef.current;
+    dragRef.current = null;
+    setDrag(null);
+    if (prev) {
       const cell = getGridCell(x, y);
       if (cell) {
         placeTower(cell.row, cell.col, prev.type);
       }
-      return null;
-    });
+    }
   }, [getGridCell, placeTower]);
 
   const handleCellPress = (row: number, col: number) => {
