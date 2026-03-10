@@ -32,6 +32,7 @@ export default function GameScreen() {
 
   const [drag, setDrag] = useState<DragState | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const gridContainerRef = useRef<View>(null);
   const gridLayout = useRef<LayoutRectangle | null>(null);
   const gridSize = useRef({ rows: state.grid.length, cols: state.grid[0].length });
   gridSize.current = { rows: state.grid.length, cols: state.grid[0].length };
@@ -39,6 +40,8 @@ export default function GameScreen() {
   const getGridCell = useCallback((pageX: number, pageY: number) => {
     if (!gridLayout.current) return null;
     const { x, y } = gridLayout.current;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    if (!Number.isFinite(pageX) || !Number.isFinite(pageY)) return null;
     const col = Math.floor((pageX - x) / CELL_SIZE);
     const row = Math.floor((pageY - y) / CELL_SIZE);
     if (row < 0 || row >= gridSize.current.rows || col < 0 || col >= gridSize.current.cols) return null;
@@ -124,16 +127,20 @@ export default function GameScreen() {
       {/* Game Grid */}
       <View
         style={styles.gridContainer}
-        onLayout={(e) => {
-          e.target.measureInWindow((wx: number, wy: number, w: number) => {
-            const gridW = CELL_SIZE * state.grid[0].length;
-            const offsetX = (w - gridW) / 2;
-            gridLayout.current = {
-              x: wx + offsetX,
-              y: wy,
-              width: gridW,
-              height: CELL_SIZE * state.grid.length,
-            };
+        ref={gridContainerRef}
+        onLayout={() => {
+          requestAnimationFrame(() => {
+            gridContainerRef.current?.measureInWindow((wx, wy, w, _h) => {
+              if (typeof wx !== 'number' || typeof wy !== 'number' || typeof w !== 'number') return;
+              const gridW = CELL_SIZE * state.grid[0].length;
+              const offsetX = (w - gridW) / 2;
+              gridLayout.current = {
+                x: wx + offsetX,
+                y: wy,
+                width: gridW,
+                height: CELL_SIZE * state.grid.length,
+              };
+            });
           });
         }}
       >

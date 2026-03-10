@@ -460,8 +460,9 @@ export function useGameEngine() {
       setState((prev) => {
         const type = towerType || prev.selectedTower;
         if (!type || prev.gameOver) return prev;
+        if (!Number.isFinite(row) || !Number.isFinite(col)) return prev;
         if (row < 0 || row >= prev.grid.length || col < 0 || col >= prev.grid[0].length) return prev;
-        if (prev.grid[row][col] !== 'empty') return prev;
+        if (!prev.grid[row] || prev.grid[row][col] !== 'empty') return prev;
         if (prev.towers.some((t) => t.row === row && t.col === col)) return prev;
 
         const config = TOWER_CONFIGS[type];
