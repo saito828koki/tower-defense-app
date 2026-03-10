@@ -268,13 +268,14 @@ export function useGameEngine() {
     });
   }, []);
 
-  const placeTower = useCallback((row: number, col: number) => {
+  const placeTower = useCallback((row: number, col: number, towerType?: TowerType) => {
     setState((prev) => {
-      if (!prev.selectedTower || prev.gameOver) return prev;
+      const type = towerType || prev.selectedTower;
+      if (!type || prev.gameOver) return prev;
       if (prev.grid[row][col] !== 'empty') return prev;
       if (prev.towers.some((t) => t.row === row && t.col === col)) return prev;
 
-      const config = TOWER_CONFIGS[prev.selectedTower];
+      const config = TOWER_CONFIGS[type];
       if (prev.gold < config.cost) return prev;
 
       const newGrid = prev.grid.map((r) => [...r]);
@@ -282,7 +283,7 @@ export function useGameEngine() {
 
       const newTower: Tower = {
         id: genId(),
-        type: prev.selectedTower,
+        type,
         row,
         col,
         lastFired: 0,

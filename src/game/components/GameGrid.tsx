@@ -12,6 +12,8 @@ const GRID_HEIGHT = CELL_SIZE * GRID_ROWS;
 interface Props {
   state: GameState;
   onCellPress: (row: number, col: number) => void;
+  hoverCell?: { row: number; col: number } | null;
+  hoverTowerType?: string | null;
 }
 
 const CellView = React.memo(
@@ -21,6 +23,8 @@ const CellView = React.memo(
     col,
     tower,
     isSelected,
+    isHovered,
+    hoverColor,
     onPress,
   }: {
     type: string;
@@ -28,6 +32,8 @@ const CellView = React.memo(
     col: number;
     tower?: Tower;
     isSelected: boolean;
+    isHovered: boolean;
+    hoverColor?: string;
     onPress: () => void;
   }) => {
     const cellStyle = useMemo(() => {
@@ -37,6 +43,7 @@ const CellView = React.memo(
       if (type === 'end') bg = '#d44';
       if (tower) bg = TOWER_CONFIGS[tower.type].color + '88';
       if (isSelected && type === 'empty') bg = '#ffffff22';
+      if (isHovered && type === 'empty' && !tower) bg = (hoverColor || '#4CAF50') + '55';
       return [
         styles.cell,
         {
@@ -44,8 +51,9 @@ const CellView = React.memo(
           width: CELL_SIZE,
           height: CELL_SIZE,
         },
+        isHovered && type === 'empty' && !tower && styles.cellHovered,
       ];
-    }, [type, tower, isSelected]);
+    }, [type, tower, isSelected, isHovered, hoverColor]);
 
     return (
       <Pressable onPress={onPress} style={cellStyle}>
@@ -64,7 +72,7 @@ const CellView = React.memo(
   }
 );
 
-export default function GameGrid({ state, onCellPress }: Props) {
+export default function GameGrid({ state, onCellPress, hoverCell, hoverTowerType }: Props) {
   const towerMap = useMemo(() => {
     const map: Record<string, Tower> = {};
     for (const t of state.towers) {
@@ -86,6 +94,8 @@ export default function GameGrid({ state, onCellPress }: Props) {
               col={c}
               tower={towerMap[`${r}-${c}`]}
               isSelected={state.selectedTower !== null && cell === 'empty'}
+              isHovered={hoverCell?.row === r && hoverCell?.col === c}
+              hoverColor={hoverTowerType ? TOWER_CONFIGS[hoverTowerType]?.color : undefined}
               onPress={() => onCellPress(r, c)}
             />
           ))}
@@ -184,6 +194,30 @@ export default function GameGrid({ state, onCellPress }: Props) {
               />
             );
           })}
+
+      {/* Drag hover range preview */}
+      {hoverCell && hoverTowerType && state.grid[hoverCell.row]?.[hoverCell.col] === 'empty' && (() => {
+        const config = TOWER_CONFIGS[hoverTowerType];
+        if (!config) return null;
+        const rangeSize = config.range * 2 * CELL_SIZE;
+        return (
+          <View
+            pointerEvents="none"
+            style={[
+              styles.rangeCircle,
+              {
+                left: hoverCell.col * CELL_SIZE + CELL_SIZE / 2 - rangeSize / 2,
+                top: hoverCell.row * CELL_SIZE + CELL_SIZE / 2 - rangeSize / 2,
+                width: rangeSize,
+                height: rangeSize,
+                borderRadius: rangeSize / 2,
+                borderColor: config.color + '66',
+                backgroundColor: config.color + '11',
+              },
+            ]}
+          />
+        );
+      })()}
     </View>
   );
 }
@@ -205,6 +239,10 @@ const styles = StyleSheet.create({
     borderColor: '#ffffff08',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  cellHovered: {
+    borderWidth: 1.5,
+    borderColor: '#ffffff44',
   },
   towerIcon: {
     justifyContent: 'center',

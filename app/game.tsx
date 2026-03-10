@@ -1,38 +1,72 @@
-import React from 'react';
-import { View, Text, StyleSheet, Pressable, Alert } from 'react-native';
+import React, { useCallback, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Pressable, LayoutRectangle } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useGameEngine } from '../src/game/useGameEngine';
-import GameGrid from '../src/game/components/GameGrid';
+import GameGrid, { CELL_SIZE } from '../src/game/components/GameGrid';
 import TowerPanel from '../src/game/components/TowerPanel';
 import HUD from '../src/game/components/HUD';
+import { TowerType } from '../src/game/types';
+import { TOWER_CONFIGS } from '../src/game/constants';
+
+interface DragState {
+  type: TowerType;
+  x: number;
+  y: number;
+}
 
 export default function GameScreen() {
   const {
     state,
     startWave,
     placeTower,
-    selectTower,
     setSpeed,
     togglePause,
     resetGame,
   } = useGameEngine();
 
-  const handleCellPress = (row: number, col: number) => {
-    if (state.selectedTower) {
-      placeTower(row, col);
-    }
-  };
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const gridLayout = useRef<LayoutRectangle | null>(null);
 
-  const handleBack = () => {
-    router.back();
+  const getGridCell = useCallback((pageX: number, pageY: number) => {
+    if (!gridLayout.current) return null;
+    const { x, y } = gridLayout.current;
+    const col = Math.floor((pageX - x) / CELL_SIZE);
+    const row = Math.floor((pageY - y) / CELL_SIZE);
+    if (row < 0 || row >= state.grid.length || col < 0 || col >= state.grid[0].length) return null;
+    return { row, col };
+  }, [state.grid]);
+
+  const hoverCell = drag ? getGridCell(drag.x, drag.y) : null;
+
+  const handleDragStart = useCallback((type: TowerType, x: number, y: number) => {
+    setDrag({ type, x, y });
+  }, []);
+
+  const handleDragMove = useCallback((x: number, y: number) => {
+    setDrag((prev) => prev ? { ...prev, x, y } : null);
+  }, []);
+
+  const handleDragEnd = useCallback((x: number, y: number) => {
+    setDrag((prev) => {
+      if (!prev) return null;
+      const cell = getGridCell(x, y);
+      if (cell) {
+        placeTower(cell.row, cell.col, prev.type);
+      }
+      return null;
+    });
+  }, [getGridCell, placeTower]);
+
+  const handleCellPress = (_row: number, _col: number) => {
+    // Cell tap is unused — towers are placed via drag & drop
   };
 
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={handleBack} style={styles.backBtn}>
+        <Pressable onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backText}>{'< 戻る'}</Text>
         </Pressable>
         <Text style={styles.headerTitle}>Tower Defense</Text>
@@ -56,23 +90,57 @@ export default function GameScreen() {
       />
 
       {/* Game Grid */}
-      <View style={styles.gridContainer}>
-        <GameGrid state={state} onCellPress={handleCellPress} />
+      <View
+        style={styles.gridContainer}
+        onLayout={(e) => {
+          // Get grid container layout, then compute actual grid position (centered)
+          const layout = e.nativeEvent.layout;
+          e.target.measureInWindow((wx: number, wy: number, w: number, h: number) => {
+            const gridW = CELL_SIZE * state.grid[0].length;
+            const offsetX = (w - gridW) / 2;
+            gridLayout.current = { x: wx + offsetX, y: wy, width: gridW, height: CELL_SIZE * state.grid.length };
+          });
+        }}
+      >
+        <GameGrid
+          state={state}
+          onCellPress={handleCellPress}
+          hoverCell={hoverCell}
+          hoverTowerType={drag?.type}
+        />
       </View>
 
-      {/* Tower Selection */}
+      {/* Tower Selection - Drag & Drop */}
       <TowerPanel
         gold={state.gold}
-        selectedTower={state.selectedTower}
-        onSelect={selectTower}
+        onDragStart={handleDragStart}
+        onDragMove={handleDragMove}
+        onDragEnd={handleDragEnd}
       />
 
       {/* Hint */}
       <Text style={styles.hint}>
-        {state.selectedTower
-          ? 'グリッドの空きマスをタップしてタワーを配置'
-          : 'タワーを選択してから配置してください'}
+        タワーをドラッグしてグリッドに配置
       </Text>
+
+      {/* Floating drag ghost */}
+      {drag && (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.dragGhost,
+            {
+              left: drag.x - 28,
+              top: drag.y - 60,
+              borderColor: TOWER_CONFIGS[drag.type].color,
+              backgroundColor: TOWER_CONFIGS[drag.type].color + '33',
+            },
+          ]}
+        >
+          <Text style={styles.dragGhostEmoji}>{TOWER_CONFIGS[drag.type].emoji}</Text>
+          <Text style={styles.dragGhostName}>{TOWER_CONFIGS[drag.type].name}</Text>
+        </View>
+      )}
 
       {/* Game Over Overlay */}
       {(state.gameOver || state.gameWon) && (
@@ -90,7 +158,7 @@ export default function GameScreen() {
             <Pressable onPress={resetGame} style={styles.retryBtn}>
               <Text style={styles.retryText}>もう一度</Text>
             </Pressable>
-            <Pressable onPress={handleBack} style={styles.menuBtn}>
+            <Pressable onPress={() => router.back()} style={styles.menuBtn}>
               <Text style={styles.menuText}>メニューへ</Text>
             </Pressable>
           </View>
@@ -140,6 +208,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: 'center',
     paddingVertical: 4,
+  },
+  dragGhost: {
+    position: 'absolute',
+    width: 56,
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    borderRadius: 10,
+    borderWidth: 2,
+    zIndex: 200,
+  },
+  dragGhostEmoji: {
+    fontSize: 28,
+  },
+  dragGhostName: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
