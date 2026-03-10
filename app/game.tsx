@@ -1,5 +1,13 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, LayoutRectangle } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  LayoutRectangle,
+  PanResponder,
+  GestureResponderEvent,
+} from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useGameEngine } from '../src/game/useGameEngine';
@@ -50,32 +58,46 @@ export default function GameScreen() {
 
   const hoverCell = drag ? getGridCell(drag.x, drag.y) : null;
 
-  const handleDragStart = useCallback((type: TowerType, x: number, y: number) => {
+  // --- Full-screen PanResponder for drag overlay ---
+  const dragPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderMove: (e: GestureResponderEvent) => {
+        if (!dragRef.current) return;
+        const newDrag = { ...dragRef.current, x: e.nativeEvent.pageX, y: e.nativeEvent.pageY };
+        dragRef.current = newDrag;
+        setDrag(newDrag);
+      },
+      onPanResponderRelease: (e: GestureResponderEvent) => {
+        const prev = dragRef.current;
+        dragRef.current = null;
+        setDrag(null);
+        if (prev) {
+          const cell = getGridCell(e.nativeEvent.pageX, e.nativeEvent.pageY);
+          if (cell) {
+            placeTower(cell.row, cell.col, prev.type);
+          }
+        }
+      },
+      onPanResponderTerminate: () => {
+        dragRef.current = null;
+        setDrag(null);
+      },
+    })
+  ).current;
+
+  // Called from TowerPanel long press
+  const handleStartDrag = useCallback((type: TowerType) => {
     selectPlacedTower(null);
-    dragRef.current = { type, x, y };
-    setDrag({ type, x, y });
+    // We don't have coordinates from longPress, so we'll set initial position off-screen
+    // and it'll be updated immediately on first move
+    const initial: DragState = { type, x: -100, y: -100 };
+    dragRef.current = initial;
+    setDrag(initial);
   }, [selectPlacedTower]);
 
-  const handleDragMove = useCallback((x: number, y: number) => {
-    if (!dragRef.current) return;
-    dragRef.current = { ...dragRef.current, x, y };
-    setDrag(dragRef.current);
-  }, []);
-
-  const handleDragEnd = useCallback((x: number, y: number) => {
-    const prev = dragRef.current;
-    dragRef.current = null;
-    setDrag(null);
-    if (prev) {
-      const cell = getGridCell(x, y);
-      if (cell) {
-        placeTower(cell.row, cell.col, prev.type);
-      }
-    }
-  }, [getGridCell, placeTower]);
-
   const handleCellPress = (row: number, col: number) => {
-    // Check if there's a tower on this cell
     const tower = state.towers.find((t) => t.row === row && t.col === col);
     if (tower) {
       selectPlacedTower(
@@ -84,14 +106,6 @@ export default function GameScreen() {
     } else {
       selectPlacedTower(null);
     }
-  };
-
-  const handleUpgrade = (towerId: string) => {
-    upgradeTower(towerId);
-  };
-
-  const handleSell = (towerId: string) => {
-    sellTower(towerId);
   };
 
   return (
@@ -157,19 +171,17 @@ export default function GameScreen() {
         <TowerInfoPanel
           tower={state.selectedPlacedTower}
           gold={state.gold}
-          onUpgrade={handleUpgrade}
-          onSell={handleSell}
+          onUpgrade={(id) => upgradeTower(id)}
+          onSell={(id) => sellTower(id)}
           onClose={() => selectPlacedTower(null)}
         />
       )}
 
-      {/* Tower Selection - Drag & Drop (hidden when info panel is shown) */}
+      {/* Tower Selection */}
       {!state.selectedPlacedTower && (
         <TowerPanel
           gold={state.gold}
-          onDragStart={handleDragStart}
-          onDragMove={handleDragMove}
-          onDragEnd={handleDragEnd}
+          onStartDrag={handleStartDrag}
         />
       )}
 
@@ -178,26 +190,31 @@ export default function GameScreen() {
         {state.selectedPlacedTower
           ? 'タワーを強化・売却できます'
           : drag
-          ? 'グリッドの空きマスにドロップして配置'
-          : 'タワーをドラッグして配置 / 配置済みタワーをタップ'}
+          ? 'グリッドの空きマスで指を離して配置'
+          : 'タワーを長押しして配置 / 配置済みタワーをタップ'}
       </Text>
 
-      {/* Floating drag ghost */}
+      {/* Drag overlay - covers entire screen to capture all touch events */}
       {drag && (
-        <View
-          pointerEvents="none"
-          style={[
-            styles.dragGhost,
-            {
-              left: drag.x - 28,
-              top: drag.y - 60,
-              borderColor: TOWER_CONFIGS[drag.type].color,
-              backgroundColor: TOWER_CONFIGS[drag.type].color + '33',
-            },
-          ]}
-        >
-          <Text style={styles.dragGhostEmoji}>{TOWER_CONFIGS[drag.type].emoji}</Text>
-          <Text style={styles.dragGhostName}>{TOWER_CONFIGS[drag.type].name}</Text>
+        <View style={styles.dragOverlay} {...dragPanResponder.panHandlers}>
+          {/* Ghost icon */}
+          {drag.x > 0 && (
+            <View
+              pointerEvents="none"
+              style={[
+                styles.dragGhost,
+                {
+                  left: drag.x - 28,
+                  top: drag.y - 60,
+                  borderColor: TOWER_CONFIGS[drag.type].color,
+                  backgroundColor: TOWER_CONFIGS[drag.type].color + '33',
+                },
+              ]}
+            >
+              <Text style={styles.dragGhostEmoji}>{TOWER_CONFIGS[drag.type].emoji}</Text>
+              <Text style={styles.dragGhostName}>{TOWER_CONFIGS[drag.type].name}</Text>
+            </View>
+          )}
         </View>
       )}
 
@@ -269,6 +286,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingVertical: 4,
   },
+  dragOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 150,
+    backgroundColor: 'transparent',
+  },
   dragGhost: {
     position: 'absolute',
     width: 56,
@@ -277,7 +299,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     borderRadius: 10,
     borderWidth: 2,
-    zIndex: 200,
   },
   dragGhostEmoji: {
     fontSize: 28,

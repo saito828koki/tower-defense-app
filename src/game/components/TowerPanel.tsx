@@ -1,96 +1,45 @@
-import React, { useRef } from 'react';
-import { View, Text, StyleSheet, PanResponder, GestureResponderEvent, ScrollView } from 'react-native';
+import React from 'react';
+import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { TowerType } from '../types';
 import { TOWER_CONFIGS } from '../constants';
 
 interface Props {
   gold: number;
-  onDragStart: (type: TowerType, x: number, y: number) => void;
-  onDragMove: (x: number, y: number) => void;
-  onDragEnd: (x: number, y: number) => void;
+  onStartDrag: (type: TowerType) => void;
 }
 
-function DraggableTowerCard({
-  type,
-  gold,
-  onDragStart,
-  onDragMove,
-  onDragEnd,
-}: {
-  type: TowerType;
-  gold: number;
-  onDragStart: (type: TowerType, x: number, y: number) => void;
-  onDragMove: (x: number, y: number) => void;
-  onDragEnd: (x: number, y: number) => void;
-}) {
-  const config = TOWER_CONFIGS[type];
-  const canAfford = gold >= config.cost;
-  const goldRef = useRef(gold);
-  goldRef.current = gold;
-  const isDragging = useRef(false);
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => goldRef.current >= config.cost,
-      onMoveShouldSetPanResponder: () => goldRef.current >= config.cost,
-      onPanResponderGrant: (e: GestureResponderEvent) => {
-        if (goldRef.current < config.cost) return;
-        isDragging.current = true;
-        onDragStart(type, e.nativeEvent.pageX, e.nativeEvent.pageY);
-      },
-      onPanResponderMove: (e: GestureResponderEvent) => {
-        if (!isDragging.current) return;
-        onDragMove(e.nativeEvent.pageX, e.nativeEvent.pageY);
-      },
-      onPanResponderRelease: (e: GestureResponderEvent) => {
-        if (!isDragging.current) return;
-        isDragging.current = false;
-        onDragEnd(e.nativeEvent.pageX, e.nativeEvent.pageY);
-      },
-      onPanResponderTerminate: (e: GestureResponderEvent) => {
-        if (!isDragging.current) return;
-        isDragging.current = false;
-        onDragEnd(e.nativeEvent.pageX, e.nativeEvent.pageY);
-      },
-    })
-  ).current;
-
-  return (
-    <View
-      {...panResponder.panHandlers}
-      style={[
-        styles.card,
-        !canAfford && styles.cardDisabled,
-        { borderColor: canAfford ? config.color + '66' : '#222' },
-      ]}
-    >
-      <Text style={styles.emoji}>{config.emoji}</Text>
-      <Text style={[styles.name, !canAfford && styles.textDisabled]} numberOfLines={1}>
-        {config.name}
-      </Text>
-      <Text style={[styles.cost, !canAfford && styles.textDisabled]}>
-        {config.cost}G
-      </Text>
-      {canAfford && <Text style={styles.dragHint}>ドラッグ</Text>}
-    </View>
-  );
-}
-
-export default function TowerPanel({ gold, onDragStart, onDragMove, onDragEnd }: Props) {
+export default function TowerPanel({ gold, onStartDrag }: Props) {
   const towers = Object.values(TOWER_CONFIGS);
 
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.container}>
-      {towers.map((config) => (
-        <DraggableTowerCard
-          key={config.type}
-          type={config.type}
-          gold={gold}
-          onDragStart={onDragStart}
-          onDragMove={onDragMove}
-          onDragEnd={onDragEnd}
-        />
-      ))}
+      {towers.map((config) => {
+        const canAfford = gold >= config.cost;
+        return (
+          <Pressable
+            key={config.type}
+            onLongPress={() => {
+              if (canAfford) onStartDrag(config.type);
+            }}
+            delayLongPress={150}
+            disabled={!canAfford}
+            style={[
+              styles.card,
+              !canAfford && styles.cardDisabled,
+              { borderColor: canAfford ? config.color + '66' : '#222' },
+            ]}
+          >
+            <Text style={styles.emoji}>{config.emoji}</Text>
+            <Text style={[styles.name, !canAfford && styles.textDisabled]} numberOfLines={1}>
+              {config.name}
+            </Text>
+            <Text style={[styles.cost, !canAfford && styles.textDisabled]}>
+              {config.cost}G
+            </Text>
+            {canAfford && <Text style={styles.dragHint}>長押しで配置</Text>}
+          </Pressable>
+        );
+      })}
     </ScrollView>
   );
 }
